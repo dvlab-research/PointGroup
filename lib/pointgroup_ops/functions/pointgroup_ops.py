@@ -128,9 +128,9 @@ class BallQueryBatchP(Function):
 
         n = coords.size(0)
 
-        assert coords.is_contiguous()
-        assert batch_idxs.is_contiguous()
-        assert batch_offsets.is_contiguous()
+        assert coords.is_contiguous() and coords.is_cuda
+        assert batch_idxs.is_contiguous() and batch_idxs.is_cuda
+        assert batch_offsets.is_contiguous() and batch_offsets.is_cuda
 
         while True:
             idx = torch.cuda.IntTensor(n * meanActive).zero_()

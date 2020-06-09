@@ -6,12 +6,6 @@ All Rights Reserved 2020.
 
 #include "bfs_cluster.h"
 
-#define CHECK_CUDA(x) AT_CHECK(x.type().is_cuda(), #x, " must be a CUDAtensor ")
-#define CHECK_CONTIGUOUS(x) AT_CHECK(x.is_contiguous(), #x, " must be contiguous ")
-#define CHECK_INPUT(x) CHECK_CUDA(x);CHECK_CONTIGUOUS(x)
-
-extern THCState *state;
-
 /* ================================== ballquery_batch_p ================================== */
 // input xyz: (n, 3) float
 // input batch_idxs: (n) int
@@ -19,17 +13,13 @@ extern THCState *state;
 // output idx: (n * meanActive) dim 0 for number of points in the ball, idx in n
 // output start_len: (n, 2), int
 int ballquery_batch_p(at::Tensor xyz_tensor, at::Tensor batch_idxs_tensor, at::Tensor batch_offsets_tensor, at::Tensor idx_tensor, at::Tensor start_len_tensor, int n, int meanActive, float radius){
-    CHECK_INPUT(xyz_tensor);
-    CHECK_INPUT(batch_idxs_tensor);
-    CHECK_INPUT(batch_offsets_tensor);
-
     const float *xyz = xyz_tensor.data<float>();
     const int *batch_idxs = batch_idxs_tensor.data<int>();
     const int *batch_offsets = batch_offsets_tensor.data<int>();
     int *idx = idx_tensor.data<int>();
     int *start_len = start_len_tensor.data<int>();
 
-    cudaStream_t stream = THCState_getCurrentStream(state);
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
     int cumsum = ballquery_batch_p_cuda(n, meanActive, radius, xyz, batch_idxs, batch_offsets, idx, start_len, stream);
     return cumsum;
 }
