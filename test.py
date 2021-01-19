@@ -7,15 +7,18 @@ import torch
 import time
 import numpy as np
 import random
-import os
+import os, glob
 
-from util.config import cfg
-cfg.task = 'test'
-from util.log import logger
 import util.utils as utils
 import util.eval as eval
 
 def init():
+    global cfg
+    from util.config import get_parser
+    cfg = get_parser()
+    cfg.task = 'test'
+    cfg.dist = False
+
     global result_dir
     result_dir = os.path.join(cfg.exp_path, 'result', 'epoch{}_nmst{}_scoret{}_npointt{}'.format(cfg.test_epoch, cfg.TEST_NMS_THRESH, cfg.TEST_SCORE_THRESH, cfg.TEST_NPOINT_THRESH), cfg.split)
     backup_dir = os.path.join(result_dir, 'backup_files')
@@ -29,6 +32,10 @@ def init():
     global semantic_label_idx
     semantic_label_idx = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 24, 28, 33, 34, 36, 39]
 
+    global logger
+    from util.log import get_logger
+    logger = get_logger(cfg)
+
     logger.info(cfg)
 
     random.seed(cfg.test_seed)
@@ -37,25 +44,15 @@ def init():
     torch.cuda.manual_seed_all(cfg.test_seed)
 
 
-def test(model, model_fn, data_name, epoch):
+def test(model, model_fn, dataset, epoch):
     logger.info('>>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>')
-
-    if cfg.dataset == 'scannetv2':
-        if data_name == 'scannet':
-            from data.scannetv2_inst import Dataset
-            dataset = Dataset(test=True)
-            dataset.testLoader()
-        else:
-            print("Error: no data loader - " + data_name)
-            exit(0)
-    dataloader = dataset.test_data_loader
 
     with torch.no_grad():
         model = model.eval()
         start = time.time()
 
         matches = {}
-        for i, batch in enumerate(dataloader):
+        for i, batch in enumerate(dataset.test_data_loader):
             N = batch['feats'].shape[0]
             test_scene_name = dataset.test_file_names[int(batch['id'][0])].split('/')[-1][:12]
 
@@ -154,13 +151,13 @@ def test(model, model_fn, data_name, epoch):
             start = time.time()
 
             ##### print
-            logger.info("instance iter: {}/{} point_num: {} ncluster: {} time: total {:.2f}s inference {:.2f}s save {:.2f}s".format(batch['id'][0] + 1, len(dataset.test_files), N, nclusters, end, end1, end3))
+            logger.info("instance iter: {}/{} point_num: {} ncluster: {} time: total {:.2f}s inference {:.2f}s save {:.2f}s".format(batch['id'][0] + 1, len(dataset.test_file_names), N, nclusters, end, end1, end3))
 
         ##### evaluation
         if cfg.eval:
             ap_scores = eval.evaluate_matches(matches)
             avgs = eval.compute_averages(ap_scores)
-            eval.print_results(avgs)
+            eval.print_results(avgs, logger)
 
 
 def non_max_suppression(ious, scores, threshold):
@@ -178,6 +175,13 @@ def non_max_suppression(ious, scores, threshold):
 
 if __name__ == '__main__':
     init()
+
+    ##### SA
+    if cfg.cache:
+        if cfg.dataset == 'scannetv2':
+            test_file_names = sorted(
+                glob.glob(os.path.join(cfg.data_root, cfg.dataset, 'test', '*' + cfg.filename_suffix)))
+            utils.create_shared_memory(test_file_names, wlabel=False)
 
     ##### get model version and data version
     exp_name = cfg.config.split('/')[-1][:-5]
@@ -205,10 +209,27 @@ if __name__ == '__main__':
     logger.info('#classifier parameters (model): {}'.format(sum([x.nelement() for x in model.parameters()])))
 
     ##### model_fn (criterion)
-    model_fn = model_fn_decorator(test=True)
+    model_fn = model_fn_decorator(cfg, test=True)
 
     ##### load model
-    utils.checkpoint_restore(model, cfg.exp_path, cfg.config.split('/')[-1][:-5], use_cuda, cfg.test_epoch, dist=False, f=cfg.pretrain)      # resume from the latest epoch, or specify the epoch to restore
+    _, f = utils.checkpoint_restore(model, cfg.exp_path, cfg.config.split('/')[-1][:-5], cfg.test_epoch, dist=False, f=cfg.pretrain)  # resume from the latest epoch, or specify the epoch to restore
+    logger.info('Restore from {}'.format(f))
+
+    ##### data
+    if cfg.dataset == 'scannetv2':
+        if data_name == 'scannet':
+            from data.scannetv2_inst import Dataset
+        else:
+            print("Error: no data loader - " + data_name)
+            exit(0)
+        dataset = Dataset(cfg, test=True)
+        dataset.testLoader()
+        logger.info('Testing samples ({}): {}'.format(cfg.split, len(dataset.test_file_names)))
 
     ##### evaluate
-    test(model, model_fn, data_name, cfg.test_epoch)
+    test(model, model_fn, dataset, cfg.test_epoch)
+
+    ##### delete SA
+    # if cfg.cache:
+    #     if cfg.dataset == 'scannetv2':
+    #         utils.delete_shared_memory(test_file_names, wlabel=False)

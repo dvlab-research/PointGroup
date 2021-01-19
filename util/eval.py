@@ -265,21 +265,28 @@ def assign_instances_for_scan(scene_name, pred_info, gt_file):
     return gt2pred, pred2gt
 
 
-def print_results(avgs):
-    from util.log import logger
+def print_results(avgs, logger=None):
     sep     = ""
     col1    = ":"
     lineLen = 64
 
-    logger.info("")
-    logger.info("#" * lineLen)
+    if logger is None:
+        print("")
+        print("#" * lineLen)
+    else:
+        logger.info("")
+        logger.info("#" * lineLen)
     line  = ""
     line += "{:<15}".format("what"      ) + sep + col1
     line += "{:>15}".format("AP"        ) + sep
     line += "{:>15}".format("AP_50%"    ) + sep
     line += "{:>15}".format("AP_25%"    ) + sep
-    logger.info(line)
-    logger.info("#" * lineLen)
+    if logger is None:
+        print(line)
+        print("#" * lineLen)
+    else:
+        logger.info(line)
+        logger.info("#" * lineLen)
 
     for (li,label_name) in enumerate(CLASS_LABELS):
         ap_avg  = avgs["classes"][label_name]["ap"]
@@ -289,16 +296,26 @@ def print_results(avgs):
         line += sep + "{:>15.3f}".format(ap_avg ) + sep
         line += sep + "{:>15.3f}".format(ap_50o ) + sep
         line += sep + "{:>15.3f}".format(ap_25o ) + sep
-        logger.info(line)
+        if logger is None:
+            print(line)
+        else:
+            logger.info(line)
 
     all_ap_avg  = avgs["all_ap"]
     all_ap_50o  = avgs["all_ap_50%"]
     all_ap_25o  = avgs["all_ap_25%"]
 
-    logger.info("-"*lineLen)
+    if logger is None:
+        print("-" * lineLen)
+    else:
+        logger.info("-" * lineLen)
     line  = "{:<15}".format("average") + sep + col1
     line += "{:>15.3f}".format(all_ap_avg)  + sep
     line += "{:>15.3f}".format(all_ap_50o)  + sep
     line += "{:>15.3f}".format(all_ap_25o)  + sep
-    logger.info(line)
-    logger.info("")
+    if logger is None:
+        print(line)
+        print("")
+    else:
+        logger.info(line)
+        logger.info("")

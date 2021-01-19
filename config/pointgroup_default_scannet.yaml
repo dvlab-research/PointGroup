@@ -9,6 +9,8 @@ DATA:
   dataset: scannetv2
   filename_suffix: _inst_nostuff.pth
 
+  cache: False
+
   classes: 20
   ignore_label: -100
 

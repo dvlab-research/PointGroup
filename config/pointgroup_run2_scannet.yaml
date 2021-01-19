@@ -9,14 +9,14 @@ DATA:
   dataset: scannetv2
   filename_suffix: _inst_nostuff.pth
 
-  cache: False
+  cache: True
 
   classes: 20
   ignore_label: -100
 
   input_channel: 3
   scale: 50   # voxel_size = 1 / scale, scale 50(2cm)
-  batch_size: 4
+  batch_size: 8
   full_scale: [128, 512]
   max_npoint: 250000
   mode: 4 # 4=mean
@@ -30,11 +30,11 @@ STRUCTURE:
   use_coords: True
 
 TRAIN:
-  epochs: 384
-  train_workers: 16 # data loader workers
+  epochs: 512
+  train_workers: 2 # data loader workers
   optim: Adam # Adam or SGD
   lr: 0.001
-  step_epoch: 384
+  step_epoch: 512
   multiplier: 0.5
   momentum: 0.9
   weight_decay: 0.0001
@@ -52,6 +52,8 @@ TRAIN:
   pretrain_module: []
   fix_module: []
 
+  validation: True
+
 GROUP:
   ### point grouping
   cluster_radius: 0.03
@@ -63,7 +65,7 @@ GROUP:
 
 TEST:
   split: val
-  test_epoch: 384
+  test_epoch: 512
   test_workers: 16
   test_seed: 567
 
@@ -75,3 +77,10 @@ TEST:
   save_semantic: False
   save_pt_offsets: False
   save_instance: False
+
+DISTRIBUTE:
+  nodes: 1
+  ngpu_per_node: 2
+  tcp_port: 18888
+
+  sync_bn: False

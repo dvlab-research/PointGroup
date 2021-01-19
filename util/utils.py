@@ -1,8 +1,7 @@
-import torch, glob, os, numpy as np
+import torch, glob, os, numpy as np, SharedArray as SA
 import sys
 sys.path.append('../')
 
-from util.log import logger
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -44,9 +43,7 @@ def intersectionAndUnion(output, target, K, ignore_index=255):
     return area_intersection, area_union, area_target
 
 
-def checkpoint_restore(model, exp_path, exp_name, use_cuda=True, epoch=0, dist=False, f=''):
-    if use_cuda:
-        model.cpu()
+def checkpoint_restore(model, exp_path, exp_name, epoch=0, dist=False, f='', gpu=0):
     if not f:
         if epoch > 0:
             f = os.path.join(exp_path, exp_name + '-%09d'%epoch + '.pth')
@@ -58,8 +55,8 @@ def checkpoint_restore(model, exp_path, exp_name, use_cuda=True, epoch=0, dist=F
                 epoch = int(f[len(exp_path) + len(exp_name) + 2 : -4])
 
     if len(f) > 0:
-        logger.info('Restore from ' + f)
-        checkpoint = torch.load(f)
+        map_location = {'cuda:0': 'cuda:{}'.format(gpu)} if gpu > 0 else None
+        checkpoint = torch.load(f, map_location=map_location)
         for k, v in checkpoint.items():
             if 'module.' in k:
                 checkpoint = {k[len('module.'):]: v for k, v in checkpoint.items()}
@@ -69,9 +66,7 @@ def checkpoint_restore(model, exp_path, exp_name, use_cuda=True, epoch=0, dist=F
         else:
             model.load_state_dict(checkpoint)
 
-    if use_cuda:
-        model.cuda()
-    return epoch + 1
+    return epoch + 1, f
 
 
 def is_power2(num):
@@ -82,20 +77,18 @@ def is_multiple(num, multiple):
     return num != 0 and num % multiple == 0
 
 
-def checkpoint_save(model, exp_path, exp_name, epoch, save_freq=16, use_cuda=True):
+def checkpoint_save(model, exp_path, exp_name, epoch, save_freq=16):
     f = os.path.join(exp_path, exp_name + '-%09d'%epoch + '.pth')
-    logger.info('Saving ' + f)
-    model.cpu()
     torch.save(model.state_dict(), f)
-    if use_cuda:
-        model.cuda()
 
     #remove previous checkpoints unless they are a power of 2 or a multiple of 16 to save disk space
     epoch = epoch - 1
-    f = os.path.join(exp_path, exp_name + '-%09d'%epoch + '.pth')
-    if os.path.isfile(f):
+    fd = os.path.join(exp_path, exp_name + '-%09d'%epoch + '.pth')
+    if os.path.isfile(fd):
         if not is_multiple(epoch, save_freq) and not is_power2(epoch):
-            os.remove(f)
+            os.remove(fd)
+
+    return f
 
 
 def load_model_param(model, pretrained_dict, prefix=""):
@@ -138,3 +131,36 @@ def print_error(message, user_fault=False):
       sys.exit(2)
     sys.exit(-1)
 
+
+def sa_create(name, var):
+    x = SA.create(name, var.shape, dtype=var.dtype)
+    x[...] = var[...]
+    x.flags.writeable = False
+    return x
+
+
+def create_shared_memory(file_names, wlabel=True):
+    for i, fname in enumerate(file_names):
+        fn = fname.split('/')[-1][:12]
+        if not os.path.exists("/dev/shm/{}_xyz".format(fn)):
+            print("[PID {}] {} {}".format(os.getpid(), i, fn))
+            if wlabel:
+                xyz, rgb, label, instance_label = torch.load(fname)
+            else:
+                xyz, rgb = torch.load(fname)
+            sa_create("shm://{}_xyz".format(fn), xyz)
+            sa_create("shm://{}_rgb".format(fn), rgb)
+            if wlabel:
+                sa_create("shm://{}_label".format(fn), label)
+                sa_create("shm://{}_instance_label".format(fn), instance_label)
+
+
+def delete_shared_memory(file_names, wlabel=True):
+    for fname in file_names:
+        fn = fname.split('/')[-1][:12]
+        if os.path.exists("/dev/shm/{}_xyz".format(fn)):
+            SA.delete("shm://{}_xyz".format(fn))
+            SA.delete("shm://{}_rgb".format(fn))
+            if wlabel:
+                SA.delete("shm://{}_label".format(fn))
+                SA.delete("shm://{}_instance_label".format(fn))

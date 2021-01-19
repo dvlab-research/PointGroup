@@ -9,7 +9,7 @@ import spconv
 from spconv.modules import SparseModule
 import functools
 from collections import OrderedDict
-import sys
+import sys, os
 sys.path.append('../../')
 
 from lib.pointgroup_ops.functions import pointgroup_ops
@@ -188,9 +188,14 @@ class PointGroup(nn.Module):
 
         #### load pretrain weights
         if self.pretrain_path is not None:
-            pretrain_dict = torch.load(self.pretrain_path)
+            map_location = {'cuda:0': 'cuda:{}'.format(cfg.local_rank)} if cfg.local_rank > 0 else None
+            pretrain_dict = torch.load(self.pretrain_path, map_location=map_location)
+            if 'module.' in list(pretrain_dict.keys())[0]:
+                pretrain_dict = {k[len('module.'):]: v for k, v in pretrain_dict.items()}
             for m in self.pretrain_module:
-                print("Load pretrained " + m + ": %d/%d" % utils.load_model_param(module_map[m], pretrain_dict, prefix=m))
+                n1, n2 = utils.load_model_param(module_map[m], pretrain_dict, prefix=m)
+                if cfg.local_rank == 0:
+                    print("[PID {}] Load pretrained ".format(os.getpid()) + m + ": {}/{}".format(n1, n2))
 
 
     @staticmethod
@@ -321,9 +326,7 @@ class PointGroup(nn.Module):
         return ret
 
 
-def model_fn_decorator(test=False):
-    #### config
-    from util.config import cfg
+def model_fn_decorator(cfg, test=False):
 
     #### criterion
     semantic_criterion = nn.CrossEntropyLoss(ignore_index=cfg.ignore_label).cuda()

@@ -112,6 +112,12 @@ python prepare_data_inst.py --data_split test
 ```
 CUDA_VISIBLE_DEVICES=0 python train.py --config config/pointgroup_run1_scannet.yaml 
 ```
+Multi-GPU training:
+
+For example, when using 2 gpus, set `ngpu_per_node` in config file as 2 (batch size 8), and run
+```
+CUDA_VISIBLE_DEVICES=0,1 python train_ddp.py --config config/pointgroup_run2_scannet.yaml
+```
 You can start a tensorboard session by
 ```
 tensorboard --logdir=./exp --port=6666

@@ -5,15 +5,19 @@ Written by Li Jiang
 
 import torch
 import torch.optim as optim
-import time, sys, os, random
+import time, sys, os, random, glob
 from tensorboardX import SummaryWriter
 import numpy as np
 
-from util.config import cfg
-from util.log import logger
 import util.utils as utils
 
 def init():
+    # config
+    global cfg
+    from util.config import get_parser
+    cfg = get_parser()
+    cfg.dist = False
+
     # copy important files to backup
     backup_dir = os.path.join(cfg.exp_path, 'backup_files')
     os.makedirs(backup_dir, exist_ok=True)
@@ -21,6 +25,11 @@ def init():
     os.system('cp {} {}'.format(cfg.model_dir, backup_dir))
     os.system('cp {} {}'.format(cfg.dataset_dir, backup_dir))
     os.system('cp {} {}'.format(cfg.config, backup_dir))
+
+    # logger
+    global logger
+    from util.log import get_logger
+    logger = get_logger(cfg)
 
     # log the config
     logger.info(cfg)
@@ -86,7 +95,8 @@ def train_epoch(train_loader, model, model_fn, optimizer, epoch):
 
     logger.info("epoch: {}/{}, train loss: {:.4f}, time: {}s".format(epoch, cfg.epochs, am_dict['loss'].avg, time.time() - start_epoch))
 
-    utils.checkpoint_save(model, cfg.exp_path, cfg.config.split('/')[-1][:-5], epoch, cfg.save_freq, use_cuda)
+    f = utils.checkpoint_save(model, cfg.exp_path, cfg.config.split('/')[-1][:-5], epoch, cfg.save_freq)
+    logger.info('Saving {}'.format(f))
 
     for k in am_dict.keys():
         if k in visual_dict.keys():
@@ -126,6 +136,16 @@ if __name__ == '__main__':
     ##### init
     init()
 
+    ##### SA
+    if cfg.cache:
+        if cfg.dataset == 'scannetv2':
+            train_file_names = sorted(
+                glob.glob(os.path.join(cfg.data_root, cfg.dataset, 'train', '*' + cfg.filename_suffix)))
+            val_file_names = sorted(
+                glob.glob(os.path.join(cfg.data_root, cfg.dataset, 'val', '*' + cfg.filename_suffix)))
+            utils.create_shared_memory(train_file_names, wlabel=True)
+            utils.create_shared_memory(val_file_names, wlabel=True)
+
     ##### get model version and data version
     exp_name = cfg.config.split('/')[-1][:-5]
     model_name = exp_name.split('_')[0]
@@ -158,21 +178,24 @@ if __name__ == '__main__':
         optimizer = optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=cfg.lr, momentum=cfg.momentum, weight_decay=cfg.weight_decay)
 
     ##### model_fn (criterion)
-    model_fn = model_fn_decorator()
+    model_fn = model_fn_decorator(cfg)
 
     ##### dataset
     if cfg.dataset == 'scannetv2':
         if data_name == 'scannet':
             import data.scannetv2_inst
-            dataset = data.scannetv2_inst.Dataset()
-            dataset.trainLoader()
-            dataset.valLoader()
+            dataset = data.scannetv2_inst.Dataset(cfg)
         else:
             print("Error: no data loader - " + data_name)
             exit(0)
+        dataset.trainLoader()
+        logger.info('Training samples: {}'.format(len(dataset.train_file_names)))
+        dataset.valLoader()
+        logger.info('Validation samples: {}'.format(len(dataset.val_file_names)))
 
     ##### resume
-    start_epoch = utils.checkpoint_restore(model, cfg.exp_path, cfg.config.split('/')[-1][:-5], use_cuda)      # resume from the latest epoch, or specify the epoch to restore
+    start_epoch, f = utils.checkpoint_restore(model, cfg.exp_path, cfg.config.split('/')[-1][:-5])
+    logger.info('Restore from {}'.format(f) if len(f) > 0 else 'Start from epoch {}'.format(start_epoch))
 
     ##### train and val
     for epoch in range(start_epoch, cfg.epochs + 1):
@@ -180,3 +203,10 @@ if __name__ == '__main__':
 
         if utils.is_multiple(epoch, cfg.save_freq) or utils.is_power2(epoch):
             eval_epoch(dataset.val_data_loader, model, model_fn, epoch)
+
+
+    ##### delete SA
+    # if cfg.cache:
+    #     if cfg.dataset == 'scannetv2':
+    #         utils.delete_shared_memory(train_file_names, wlabel=True)
+    #         utils.delete_shared_memory(val_file_names, wlabel=True)

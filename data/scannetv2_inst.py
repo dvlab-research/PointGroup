@@ -8,15 +8,14 @@ import scipy.ndimage
 import scipy.interpolate
 import torch
 from torch.utils.data import DataLoader
+import SharedArray as SA
 
 sys.path.append('../')
 
-from util.config import cfg
-from util.log import logger
 from lib.pointgroup_ops.functions import pointgroup_ops
 
 class Dataset:
-    def __init__(self, test=False):
+    def __init__(self, cfg, test=False):
         self.data_root = cfg.data_root
         self.dataset = cfg.dataset
         self.filename_suffix = cfg.filename_suffix
@@ -30,6 +29,9 @@ class Dataset:
         self.max_npoint = cfg.max_npoint
         self.mode = cfg.mode
 
+        self.dist = cfg.dist
+        self.cache = cfg.cache
+
         if test:
             self.test_split = cfg.split  # val or test
             self.test_workers = cfg.test_workers
@@ -37,36 +39,41 @@ class Dataset:
 
 
     def trainLoader(self):
-        train_file_names = sorted(glob.glob(os.path.join(self.data_root, self.dataset, 'train', '*' + self.filename_suffix)))
-        self.train_files = [torch.load(i) for i in train_file_names]
+        self.train_file_names = sorted(glob.glob(os.path.join(self.data_root, self.dataset, 'train', '*' + self.filename_suffix)))
+        if not self.cache:
+            self.train_files = [torch.load(i) for i in self.train_file_names]
 
-        logger.info('Training samples: {}'.format(len(self.train_files)))
-
-        train_set = list(range(len(self.train_files)))
+        train_set = list(range(len(self.train_file_names)))
+        self.train_sampler = torch.utils.data.distributed.DistributedSampler(train_set) if self.dist else None
         self.train_data_loader = DataLoader(train_set, batch_size=self.batch_size, collate_fn=self.trainMerge, num_workers=self.train_workers,
-                                            shuffle=True, sampler=None, drop_last=True, pin_memory=True)
+                                            shuffle=(self.train_sampler is None), sampler=self.train_sampler, drop_last=True, pin_memory=True,
+                                            worker_init_fn=self._worker_init_fn_)
 
 
     def valLoader(self):
-        val_file_names = sorted(glob.glob(os.path.join(self.data_root, self.dataset, 'val', '*' + self.filename_suffix)))
-        self.val_files = [torch.load(i) for i in val_file_names]
+        self.val_file_names = sorted(glob.glob(os.path.join(self.data_root, self.dataset, 'val', '*' + self.filename_suffix)))
+        if not self.cache:
+            self.val_files = [torch.load(i) for i in self.val_file_names]
 
-        logger.info('Validation samples: {}'.format(len(self.val_files)))
-
-        val_set = list(range(len(self.val_files)))
+        val_set = list(range(len(self.val_file_names)))
+        self.val_sampler = torch.utils.data.distributed.DistributedSampler(val_set) if self.dist else None
         self.val_data_loader = DataLoader(val_set, batch_size=self.batch_size, collate_fn=self.valMerge, num_workers=self.val_workers,
-                                          shuffle=False, drop_last=False, pin_memory=True)
+                                          shuffle=False, sampler=self.val_sampler, drop_last=False, pin_memory=True, worker_init_fn=self._worker_init_fn_)
 
 
     def testLoader(self):
         self.test_file_names = sorted(glob.glob(os.path.join(self.data_root, self.dataset, self.test_split, '*' + self.filename_suffix)))
-        self.test_files = [torch.load(i) for i in self.test_file_names]
+        if not self.cache:
+            self.test_files = [torch.load(i) for i in self.test_file_names]
 
-        logger.info('Testing samples ({}): {}'.format(self.test_split, len(self.test_files)))
-
-        test_set = list(np.arange(len(self.test_files)))
+        test_set = list(np.arange(len(self.test_file_names)))
         self.test_data_loader = DataLoader(test_set, batch_size=1, collate_fn=self.testMerge, num_workers=self.test_workers,
                                            shuffle=False, drop_last=False, pin_memory=True)
+
+    def _worker_init_fn_(self, worker_id):
+        torch_seed = torch.initial_seed()
+        np_seed = torch_seed // 2 ** 32 - 1
+        np.random.seed(np_seed)
 
     #Elastic distortion
     def elastic(self, x, gran, mag):
@@ -173,7 +180,14 @@ class Dataset:
 
         total_inst_num = 0
         for i, idx in enumerate(id):
-            xyz_origin, rgb, label, instance_label = self.train_files[idx]
+            if self.cache:
+                fn = self.train_file_names[idx].split('/')[-1][:12]
+                xyz_origin = SA.attach("shm://{}_xyz".format(fn)).copy()
+                rgb = SA.attach("shm://{}_rgb".format(fn)).copy()
+                label = SA.attach("shm://{}_label".format(fn)).copy()
+                instance_label = SA.attach("shm://{}_instance_label".format(fn)).copy()
+            else:
+                xyz_origin, rgb, label, instance_label = self.train_files[idx]
 
             ### jitter / flip x / rotation
             xyz_middle = self.dataAugment(xyz_origin, True, True, True)
@@ -254,7 +268,14 @@ class Dataset:
 
         total_inst_num = 0
         for i, idx in enumerate(id):
-            xyz_origin, rgb, label, instance_label = self.val_files[idx]
+            if self.cache:
+                fn = self.val_file_names[idx].split('/')[-1][:12]
+                xyz_origin = SA.attach("shm://{}_xyz".format(fn)).copy()
+                rgb = SA.attach("shm://{}_rgb".format(fn)).copy()
+                label = SA.attach("shm://{}_label".format(fn)).copy()
+                instance_label = SA.attach("shm://{}_instance_label".format(fn)).copy()
+            else:
+                xyz_origin, rgb, label, instance_label = self.val_files[idx]
 
             ### flip x / rotation
             xyz_middle = self.dataAugment(xyz_origin, False, True, True)
@@ -325,13 +346,16 @@ class Dataset:
         batch_offsets = [0]
 
         for i, idx in enumerate(id):
-            if self.test_split == 'val':
-                xyz_origin, rgb, label, instance_label = self.test_files[idx]
-            elif self.test_split == 'test':
-                xyz_origin, rgb = self.test_files[idx]
+            assert self.test_split in ['val', 'test']
+            if not self.cache:
+                if self.test_split == 'val':
+                    xyz_origin, rgb, label, instance_label = self.test_files[idx]
+                elif self.test_split == 'test':
+                    xyz_origin, rgb = self.test_files[idx]
             else:
-                print("Wrong test split: {}!".format(self.test_split))
-                exit(0)
+                fn = self.test_file_names[idx].split('/')[-1][:12]
+                xyz_origin = SA.attach("shm://{}_xyz".format(fn)).copy()
+                rgb = SA.attach("shm://{}_rgb".format(fn)).copy()
 
             ### flip x / rotation
             xyz_middle = self.dataAugment(xyz_origin, False, True, True)
