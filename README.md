@@ -51,9 +51,10 @@ conda install -c bioconda google-sparsehash
 
 - To compile `spconv`, firstly install the dependent libraries.
 
-```
+```bash
 conda install libboost
 conda install -c daleydeng gcc-5 # need gcc-5.4 for sparseconv
+sudo apt-get update && sudo apt-get install -y libboost-all-dev
 ```
 
 Add the `$INCLUDE_PATH$` that contains `boost` in `lib/spconv/CMakeLists.txt`. (Not necessary if it could be found.)
