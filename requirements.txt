@@ -2,5 +2,5 @@ torch==1.7.1
 cmake>=3.13.2
 plyfile
 tensorboardX
-pyyaml
+pyyaml==5.4.1 
 scipy
