@@ -67,6 +67,11 @@ include_directories($INCLUDE_PATH$)
 
 1. go to `lib/spconv/src/spconv/all.cc`, run
 2. On line number 20 replace `torch::jit::RegisterOperators` with `torch::RegisterOperators`
+3. Or install
+
+   1. ```bash
+      pip install spconv-1.0-cp39-cp39-linux_x86_64.whl
+      ```
 
 ```bash
 cd lib/spconv
