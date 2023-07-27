@@ -70,3 +70,6 @@ dataset/scannetv2/test
 dataset/scannetv2/val_gt
 
 
+scans/*
+test.ipynb
+model/pointgroup/pointgroup.pth

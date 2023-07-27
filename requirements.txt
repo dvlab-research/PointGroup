@@ -1,4 +1,4 @@
-torch==1.1
+torch==1.7.1
 cmake>=3.13.2
 plyfile
 tensorboardX
