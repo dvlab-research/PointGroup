@@ -65,7 +65,10 @@ include_directories($INCLUDE_PATH$)
 
 - Compile the `spconv` library.
 
-```
+1. go to `lib/spconv/src/spconv/all.cc`, run
+2. On line number 20 replace `torch::jit::RegisterOperators` with `torch::RegisterOperators`
+
+```bash
 cd lib/spconv
 python setup.py bdist_wheel
 ```
